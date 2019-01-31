@@ -2,6 +2,7 @@ import org.apache.spark.{SparkContext, SparkConf}
 import org.apache.spark.sql.{SparkSession, Column}
 import org.apache.spark.sql.functions._
 import scala.math.log
+import scala.collection.JavaConverters._
 
 
 object RecommendationEngine {
@@ -26,6 +27,14 @@ object RecommendationEngine {
 			agg(collect_set("user") as "users", count("user") as "num_users").
 			orderBy(asc("movie"))
 		itemUsers.show(5 )
+		
+		//val users_1 = itemUsers.filter($"movie" === 1)
+			//.select("users").collect()(0).getList(0)
+		//val users_18 = itemUsers.filter($"movie" === 18)
+			//.select("users").collect()(0).getList(0)
+		//println(s"users_1 : ${users_1}")
+		//println(s"users_18: ${users_18}")
+
 		val df = itemUsers
 
 		//---------   Cross join to get metrics for movie pairs  ----------------
@@ -33,12 +42,11 @@ object RecommendationEngine {
 		val common_set_size_udf = udf(common_set_size_fn)
 
 		//shannon entropy
-		def xlogx(v: Double) : Double = if (v==0) 0 else v*log(v)
+		def xlogx(v: Long) : Double = if (v==0) 0 else v*log(v)
 
+		//xlogx(sum) - sum(xlogx)
 		def entropy(k: Seq[Long]) : Double =  {
-			val N = k.sum
-			val fracs = k.map(x => x.toDouble/N)
-		 	N*(xlogx(fracs.sum) - fracs.map(v => xlogx(v)).sum)
+		 	(xlogx(k.sum) - k.map(v => xlogx(v)).sum)
 		}
 
 		// lrr= 2* (H(k) - H(rowSums(k)) - H(colSums(k)))
