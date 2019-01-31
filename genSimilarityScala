@@ -1,0 +1,1 @@
+spark-submit --master yarn --class RecommendationEngine scalaImpl/target/scala-2.11/recommendationengine_2.11-1.0.jar scalaImpl/build.sbt
