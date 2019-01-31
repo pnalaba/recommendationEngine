@@ -38,10 +38,10 @@ object RecommendationEngine {
 		def entropy(k: Seq[Long]) : Double =  {
 			val N = k.sum
 			val fracs = k.map(x => x.toDouble/N)
-		 	xlogx(fracs.sum) - fracs.map(v => xlogx(v)).sum
+		 	N*(xlogx(fracs.sum) - fracs.map(v => xlogx(v)).sum)
 		}
 
-		// lrr= 2 sum(k) (H(k) - H(rowSums(k)) - H(colSums(k)))
+		// lrr= 2* (H(k) - H(rowSums(k)) - H(colSums(k)))
 		val lrr_fn = (num_users: Long,  num_users_R: Long, num_common_users: Long) => {
 			val k : Seq[Long]  = Seq(num_common_users,
 				num_users_R-num_common_users,
@@ -54,7 +54,7 @@ object RecommendationEngine {
 			val colEntropy = entropy(colSums)
 			val matrixEntropy = entropy(k)
 
-			val lrr =  (rowEntropy + colEntropy - matrixEntropy)*2.0
+			val lrr = (rowEntropy + colEntropy - matrixEntropy)*2.0
 			if ( lrr < 0 ) 0.0 else lrr
 		}
 
