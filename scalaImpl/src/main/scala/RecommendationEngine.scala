@@ -13,7 +13,7 @@ object RecommendationEngine {
 
 		//-----   Read in data into dataframe of columns = user, movie   -----------
 		val dataDF = spark.read.option("sep","\t").
-			csv("projects/recommendationEngine/u.data").
+			csv("projects/recommendationEngine/test.data").
 			toDF("user","movie","rating","dummy").
 			withColumn("movie",  col("movie").cast("int")).
 			drop("rating","dummy")
@@ -30,10 +30,7 @@ object RecommendationEngine {
 		
 		//val users_1 = itemUsers.filter($"movie" === 1)
 			//.select("users").collect()(0).getList(0)
-		//val users_18 = itemUsers.filter($"movie" === 18)
-			//.select("users").collect()(0).getList(0)
 		//println(s"users_1 : ${users_1}")
-		//println(s"users_18: ${users_18}")
 
 		val df = itemUsers
 
@@ -70,20 +67,14 @@ object RecommendationEngine {
 			val lrr = lrr_fn(num_users, num_users_R, num_common_users)
 			1.0 - 1.0/(1.0 + lrr)
 		}
-
-		println(s"similarity(452,26,14) : ${lrr_fn(452,26,14)} => ${similarity_fn(452,26,14)}")
-		println(s"similarity(452,39,33) : ${lrr_fn(452,39,33)} => ${similarity_fn(452,39,33)}")
-		println(s"similarity(452,10,5) : ${lrr_fn(452,10,5)} => ${similarity_fn(452,10,5)}")
-		println(s"similarity(452,131,104) : ${lrr_fn(452,131,104)} => ${similarity_fn(452,131,104)}")
-
 		val similarity_udf = udf(similarity_fn)
 
 		// -----  Calculate the similarity using log-likelihood ratio  ----------------
 		val join = df.
 			join(df.toDF(df.columns.map(_+"_R"):_*), $"movie" < $"movie_R").
-			withColumn("num_common_users",common_set_size_udf($"users",$"users_R")).
+			withColumn("num_common",common_set_size_udf($"users",$"users_R")).
 			drop("users","users_R").
-			withColumn("similarity",similarity_udf($"num_users",$"num_users_R",$"num_common_users")).
+			withColumn("similarity",similarity_udf($"num_users",$"num_users_R",$"num_common")).
 			limit(25)
 
 		join.show(25)
