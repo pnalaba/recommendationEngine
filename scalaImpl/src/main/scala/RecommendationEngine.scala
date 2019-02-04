@@ -2,10 +2,6 @@ import org.apache.spark.{SparkContext, SparkConf}
 import org.apache.spark.sql.{SparkSession, Column}
 import org.apache.spark.sql.functions._
 import scala.math.log
-import scala.collection.JavaConverters._
-import org.apache.spark.sql.Row
-import org.apache.spark.rdd.RDD
-import scala.collection.mutable.WrappedArray
 
 
 object RecommendationEngine {
@@ -35,41 +31,44 @@ object RecommendationEngine {
 			val lrr = (rowEntropy + colEntropy - matrixEntropy)*2.0
 			if ( lrr < 0 ) 0.0 else lrr
 		}
-		
-
-		val spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
-		spark.conf.set("spark.sql.crossJoin.enabled", true)
-		import spark.implicits._
-
-		//-----   Read in data into dataframe of columns = user, movie   -----------
-		val dataDF = spark.read.option("sep","\t").
-			csv("projects/recommendationEngine/test.data").
-			toDF("user","movie","rating","dummy").
-			withColumn("movie",  col("movie").cast("int")).
-			drop("rating","dummy")
-		dataDF.show(5)
-
-		val num_total_users = dataDF.agg(countDistinct($"user") as "count" ).collect()(0).getLong(0)
 
 		def get_similarity_fn(num_total_users : Long) = 
 			(num_users: Long,  num_users_R: Long, num_common_users: Long) => {
 			val lrr = lrr_fn(num_users, num_users_R, num_common_users, num_total_users)
 			1.0 - 1.0/(1.0 + lrr)
 		}
+	
+
+		val spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
+		spark.conf.set("spark.sql.crossJoin.enabled", true)
+		import spark.implicits._
+
+		//-----   Read in data into dataframe of columns = user, movie   -----------
+		val itemUser = spark.read.option("sep","\t").
+			option("inferSchema","true").
+			csv("projects/recommendationEngine/test.data").
+			drop("_c2","_c3").
+			rdd.
+			map(x => (x(1), x(0)))
+
+		val userCountByItem = itemUser.map( { case (item,user) => (item, 1)}).reduceByKey(_ + _)
+		
+		val itemUserCounts = itemUser.join(userCountByItem) 
+		//itemUserCounts is of the form (item, (user,total_users))
+
+		val itemsByUser = userItem.map( {case (item, (user,usercount)) => (user, (item,usercount))})
+
+		val userItemPairs = itemsByUser.join(itemsByUser).
+			map({ case (user, ((item1,usercount1),(item2,usercount2))) => ((item1.asInstanceOf[Int],item2.asInstanceOf[Int]), (usercount1, usercount2, 1))}).
+			flatMap( x => Array(x)).
+			reduceByKey( (a,b) => (a._1,a._2,a._3+b._3))
+
+		val num_total_users = itemsByUser.map(x => x._1).distinct().count()
+
+		val itemPairSimilarities = userItemPairs.map( {case ((it1,it2),(numUsers1,numUsers2,numCommonUsers)) =>
+			((it1,it2), get_similarity_fn(num_total_users)(numUsers1,numUsers2,numCommonUsers))})
 
 
-
-
-/*
-
-		def testUdf = udf( (array: WrappedArray[Int]) => array.toList.flatMap(i => array.toList.map(j => (i,j) -> 1).toMap))
-
-		val userItemsRDD : RDD[Row] = dataDF.groupBy("user").
-			agg(collect_set("movie") as "movies").
-			drop("user").
-			withColumn("movies", testUdf(col("movies"))).
-			rdd
-			*/
 
 
 
@@ -79,6 +78,9 @@ object RecommendationEngine {
 
 
 		
+		/*********************************************************************/
+		/**** Old method using set intersection and self join ****************/
+		/*
 		//---------   Convert to "set of users" for each movie    -----------
 
 		val itemUsers = dataDF.groupBy("movie").
@@ -109,6 +111,7 @@ object RecommendationEngine {
 
 		join.show(25)
 
+			*/
 	}
 
 	def getRecommendationsForUser(userId: String) {
