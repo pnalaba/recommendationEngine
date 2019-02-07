@@ -7,6 +7,7 @@ import scala.math.log
 object RecommendationEngine {
 	val THRESHOLD = 0.8
 	val MAX_RECOS = 500
+	val MIN_COUNT = 1
 
 	def main(args: Array[String]){
 		//shannon entropy
@@ -60,11 +61,12 @@ object RecommendationEngine {
 
 		val itemsByUser = itemUserCounts.map( {case (item, (user,usercount)) => (user, (item,usercount))})
 
-		val userItemPairs = itemsByUser.join(itemsByUser).
-			map({ case (user, ((item1,usercount1),(item2,usercount2))) => ((item1.asInstanceOf[Int],item2.asInstanceOf[Int]), (usercount1, usercount2, 1))}).
+		val userItemPairs = itemsByUser.join(itemsByUser). //pair up items from same user
+			filter( x => x._2._1._1 != x._2._2._1). //ignore item paired up with itself
+			map({ case (user, ((item1,usercount1),(item2,usercount2))) => ((item1.asInstanceOf[Int],item2.asInstanceOf[Int]), (usercount1, usercount2, 1))}). //assign a 1 to each pair inorder to get pair counts
 			flatMap( x => Array(x)).
 			reduceByKey( (a,b) => (a._1,a._2,a._3+b._3)).
-			filter(x => x._2._3 > 0 )
+			filter(x => x._2._3 >= MIN_COUNT ) //ignore item pairs that have very low count
 
 		val num_total_users = itemsByUser.map(x => x._1).distinct().count()
 
@@ -77,7 +79,7 @@ object RecommendationEngine {
 			map( { case (x,y) => (x, y.toSeq.sortWith(_._2 > _._2).take(MAX_RECOS))})
 	
 
-
+	
 
 
 
