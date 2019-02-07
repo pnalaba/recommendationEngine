@@ -77,14 +77,9 @@ object RecommendationEngine {
 
 		val recommendations = thresholdedSimilarities.groupByKey().
 			map( { case (x,y) => (x, y.toSeq.sortWith(_._2 > _._2).take(MAX_RECOS))})
+
+		recommendations.saveAsTextFile("projects/recommendationEngine/output_scala")
 	
-
-	
-
-
-
-
-
 
 		
 
