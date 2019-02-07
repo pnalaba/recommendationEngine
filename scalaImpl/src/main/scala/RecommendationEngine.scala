@@ -5,6 +5,8 @@ import scala.math.log
 
 
 object RecommendationEngine {
+	val THRESHOLD = 0.8
+	val MAX_RECOS = 500
 
 	def main(args: Array[String]){
 		//shannon entropy
@@ -56,17 +58,26 @@ object RecommendationEngine {
 		val itemUserCounts = itemUser.join(userCountByItem) 
 		//itemUserCounts is of the form (item, (user,total_users))
 
-		val itemsByUser = userItem.map( {case (item, (user,usercount)) => (user, (item,usercount))})
+		val itemsByUser = itemUserCounts.map( {case (item, (user,usercount)) => (user, (item,usercount))})
 
 		val userItemPairs = itemsByUser.join(itemsByUser).
 			map({ case (user, ((item1,usercount1),(item2,usercount2))) => ((item1.asInstanceOf[Int],item2.asInstanceOf[Int]), (usercount1, usercount2, 1))}).
 			flatMap( x => Array(x)).
-			reduceByKey( (a,b) => (a._1,a._2,a._3+b._3))
+			reduceByKey( (a,b) => (a._1,a._2,a._3+b._3)).
+			filter(x => x._2._3 > 0 )
 
 		val num_total_users = itemsByUser.map(x => x._1).distinct().count()
 
 		val itemPairSimilarities = userItemPairs.map( {case ((it1,it2),(numUsers1,numUsers2,numCommonUsers)) =>
-			((it1,it2), get_similarity_fn(num_total_users)(numUsers1,numUsers2,numCommonUsers))})
+			(it1, (it2, get_similarity_fn(num_total_users)(numUsers1,numUsers2,numCommonUsers)))})
+
+		val thresholdedSimilarities = itemPairSimilarities.filter(x => x._2._2 > THRESHOLD)
+
+		val recommendations = thresholdedSimilarities.groupByKey().
+			map( { case (x,y) => (x, y.toSeq.sortWith(_._2 > _._2).take(MAX_RECOS))})
+	
+
+
 
 
 
