@@ -7,9 +7,25 @@ import scala.math.log
 object RecommendationEngine {
 	val THRESHOLD = 0.8
 	val MAX_RECOS = 256
-	val MIN_COUNT = 1
+	val MIN_COUNT = 10
+	val MIN_ITEM_COUNT_PER_USER = 20
 
 	def main(args: Array[String]){
+
+
+		import java.io.File
+		def deleteRecursively(file: File): Unit = {
+			if (file.isDirectory)
+				file.listFiles.foreach(deleteRecursively)
+			if (file.exists && !file.delete)
+				throw new Exception(s"Unable to delete ${file.getAbsolutePath}")   
+			if (!file.exists)
+			  println(s"Could not find file ${file}")
+		}
+
+		deleteRecursively(new File("/mapr/my.cluster.com/user/mapr/projects/recommendationEngine/output_scala"))
+
+
 		//shannon entropy
 		def xlogx(v: Long) : Double = if (v==0) 0 else v*log(v)
 
@@ -44,15 +60,21 @@ object RecommendationEngine {
 
 		val spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
 		spark.conf.set("spark.sql.crossJoin.enabled", true)
+		spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
 		import spark.implicits._
 
 		//-----   Read in data into dataframe of columns = user, movie   -----------
-		val itemUser = spark.read.option("sep","\t").
+		val userItem = spark.read.option("sep","\t").
 			option("inferSchema","true").
 			csv("projects/recommendationEngine/test.data").
 			drop("_c2","_c3").
 			rdd.
-			map(x => (x(1), x(0)))
+			map( x => (x(0).asInstanceOf[Int], x(1).asInstanceOf[Int]))
+
+		val userItemCount = userItem.groupByKey().filter( {case (x,y) => y.toSeq.length > MIN_ITEM_COUNT_PER_USER})
+
+		val itemUser = userItemCount.flatMapValues(x => x).
+			map(x => (x._2, x._1))
 
 		val userCountByItem = itemUser.map( { case (item,user) => (item, 1)}).reduceByKey(_ + _)
 		
@@ -84,7 +106,7 @@ object RecommendationEngine {
 
 		sortedRecommendations.
 			map({ case (it1, it2, sim, nu1, nu2, cu) => s"$it1\t$it2\t$sim\t$nu1\t$nu2\t$cu"}).
-			saveAsTextFile("projects/recommendations/output_scala")
+			saveAsTextFile("projects/recommendationEngine/output_scala")
 
 
 		
