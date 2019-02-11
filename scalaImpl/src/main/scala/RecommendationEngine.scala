@@ -22,8 +22,19 @@ object RecommendationEngine {
 	var spark : SparkSession = null
 
 	def main(args: Array[String]){
+		init_spark()
 		//calculateSimilarities()
 		loadSimilarities()
+		println("Recos for user 1 : "+getRecosForKnownUser("1").deep.mkString("\n"))
+	}
+
+
+	def init_spark() {
+		spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
+		spark.conf.set("spark.sql.crossJoin.enabled", true)
+		spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
+		val spark_ = spark
+		import spark_.implicits._
 	}
 
 	def calculateSimilarities(){
@@ -32,13 +43,14 @@ object RecommendationEngine {
 		def deleteRecursively(file: File): Unit = {
 			if (file.isDirectory)
 				file.listFiles.foreach(deleteRecursively)
-			if (file.exists && !file.delete)
-				throw new Exception(s"Unable to delete ${file.getAbsolutePath}")   
-			if (!file.exists)
-			  println(s"Could not find file ${file}")
+			if (file.exists) {
+				if(!file.delete) throw new Exception(s"Unable to delete ${file.getAbsolutePath}")   
+			} else println(s"Could not find file ${file}")
 		}
 
-		deleteRecursively(new File("/mapr/my.cluster.com/user/mapr/projects/recommendationEngine/output_scala"))
+
+		deleteRecursively(new File("/mapr/my.cluster.com/user/mapr/projects/recommendationEngine/output_recommendations"))
+		deleteRecursively(new File("/mapr/my.cluster.com/user/mapr/projects/recommendationEngine/output_similarities"))
 
 
 		//shannon entropy
@@ -73,11 +85,6 @@ object RecommendationEngine {
 		}
 	
 
-		spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
-		spark.conf.set("spark.sql.crossJoin.enabled", true)
-		spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
-		val spark_ = spark
-		import spark_.implicits._
 
 
 		//-----   Read in data into dataframe of columns = user, movie   -----------
@@ -131,7 +138,7 @@ object RecommendationEngine {
 
 		sortedRecommendations.
 			map({ case (it1, it2, sim, nu1, nu2, cu) => s"$it1\t$it2\t$sim\t$nu1\t$nu2\t$cu"}).
-			saveAsTextFile("projects/recommendationEngine/output_scala")
+			saveAsTextFile("projects/recommendationEngine/output_recommendations")
 
 		
 		/*********************************************************************/
@@ -173,9 +180,19 @@ object RecommendationEngine {
 
 	def loadSimilarities() {
 		itemPairSimilarities = spark.sparkContext.textFile("projects/recommendationEngine/output_similarities").
-		map( x => x.split("\\s+") match {
-			case Array(it1, it2, sim, nu1, nu2, cu) => (it1.asInstanceOf[Int], (it2.asInstanceOf[Int], sim.asInstanceOf[Double], nu1.asInstanceOf[Int], nu2.asInstanceOf[Int], cu.asInstanceOf[Int]))
-			})
+			map ( x =>  {
+				val y = x.split("\\s+")
+				(y(0).toInt, (y(1).toInt, y(2).toDouble, y(3).toInt, y(4).toInt, y(5).toInt)) 
+				})
+
+
+		userRatings = spark.read.option("sep","\t").
+			option("inferSchema","true").
+			csv("projects/recommendationEngine/test.data").
+			drop("_c3").
+			rdd.
+			map( x => (x(0).asInstanceOf[Int], x(1).asInstanceOf[Int], x(2).asInstanceOf[Int]))
+
 
 	}
 
@@ -183,7 +200,7 @@ object RecommendationEngine {
 		//---- Get preferences of user     ------------
 		//val userPrefs = dataDF.filter(user == userId).groupBy("user").agg(collect_set("user") as "users").orderBy(asc("movie"))
 		val userPrefs = userRatings.
-			filter({case (u,i,r) => u == userId.asInstanceOf[Int]}).
+			filter({case (u,i,r) => u == userId.toInt}).
 			flatMap({case (u,i,r) => Array((i, r))})
 
 		val columnProducts = userPrefs.join(itemPairSimilarities).
