@@ -5,7 +5,7 @@ import scala.math.log
 
 
 object RecommendationEngine {
-	val THRESHOLD = 0.8
+	val THRESHOLD = 0.9
 	val MAX_SIMILARITIES = 256
 	val MIN_COUNT = 10
 	val MIN_ITEM_COUNT_PER_USER = 1
@@ -19,8 +19,14 @@ object RecommendationEngine {
 
 	var itemPairSimilarities:org.apache.spark.rdd.RDD[(Int, (Int, Double, Int, Int, Int))] = null
 
-	def main(args: Array[String]){
+	var spark : SparkSession = null
 
+	def main(args: Array[String]){
+		//calculateSimilarities()
+		loadSimilarities()
+	}
+
+	def calculateSimilarities(){
 
 		import java.io.File
 		def deleteRecursively(file: File): Unit = {
@@ -67,10 +73,12 @@ object RecommendationEngine {
 		}
 	
 
-		val spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
+		spark = SparkSession.builder().appName("RecommendationEngine").getOrCreate()
 		spark.conf.set("spark.sql.crossJoin.enabled", true)
 		spark.conf.set("spark.hadoop.validateOutputSpecs", "false")
-		import spark.implicits._
+		val spark_ = spark
+		import spark_.implicits._
+
 
 		//-----   Read in data into dataframe of columns = user, movie   -----------
 		userRatings = spark.read.option("sep","\t").
@@ -107,6 +115,10 @@ object RecommendationEngine {
 
 		itemPairSimilarities = userItemPairs.map( {case ((it1,it2),(numUsers1,numUsers2,numCommonUsers)) =>
 			(it1, (it2, get_similarity_fn(num_total_users)(numUsers1,numUsers2,numCommonUsers), numUsers1, numUsers2, numCommonUsers))})
+			
+		itemPairSimilarities.
+		map({ case (it1, (it2,sim, nu1, nu2, cu)) => s"$it1\t$it2\t$sim\t$nu1\t$nu2\t$cu"}).
+		saveAsTextFile("projects/recommendationEngine/output_similarities")
 
 		thresholdedSimilarities = itemPairSimilarities.filter(x => x._2._2 > THRESHOLD)
 
@@ -158,7 +170,16 @@ object RecommendationEngine {
 			*/
 	}
 
-	def getRecosForKnownUser(userId: String) {
+
+	def loadSimilarities() {
+		itemPairSimilarities = spark.sparkContext.textFile("projects/recommendationEngine/output_similarities").
+		map( x => x.split("\\s+") match {
+			case Array(it1, it2, sim, nu1, nu2, cu) => (it1.asInstanceOf[Int], (it2.asInstanceOf[Int], sim.asInstanceOf[Double], nu1.asInstanceOf[Int], nu2.asInstanceOf[Int], cu.asInstanceOf[Int]))
+			})
+
+	}
+
+	def getRecosForKnownUser(userId: String) : Array[(Int,Double)] =  {
 		//---- Get preferences of user     ------------
 		//val userPrefs = dataDF.filter(user == userId).groupBy("user").agg(collect_set("user") as "users").orderBy(asc("movie"))
 		val userPrefs = userRatings.
@@ -173,30 +194,13 @@ object RecommendationEngine {
 			sortBy( -_._2).
 			take(MAX_RECOS)
 
-		return matrixProduct.first()
+		return matrixProduct
 	}
 
 
-	def getRecosForNewUser(ratings : Array[(Int,Int)]) {
+	def getRecosForNewUser(ratings : Array[(Int,Int)]) : Array[(Int,Double)] =  {
 		//---- Get preferences of user     ------------
-		val userPrefs = spark.sparkContext.sparallelize(ratings)
-
-		val columnProducts = userPrefs.join(itemPairSimilarities).
-			map({ case (it1, (r1, (it2, s2,d1,d2,d3))) => ( it2,  r1*s2) })
-
-		val matrixProduct = columnProducts.
-			reduceByKey(_ + _).
-			sortBy( -_._2).
-			take(MAX_RECOS)
-
-		return matrixProduct.first()
-	}
-			
-
-
-			
-
-			
+		val userPrefs = spark.sparkContext.parallelize(ratings)
 
 		//---- matrix multiplication  ----------------
 		//---  multiply each column i of similarity matrix with column i of userPrefs ----
@@ -206,6 +210,24 @@ object RecommendationEngine {
 		//     outvector += similarityMatrix[ratedMovie]*userPrefs[ratedMovie]
 
 		// sort(outVector) and return top k cols
+
+
+		val columnProducts = userPrefs.join(itemPairSimilarities).
+			map({ case (it1, (r1, (it2, s2,d1,d2,d3))) => ( it2,  r1*s2) })
+
+		val matrixProduct = columnProducts.
+			reduceByKey(_ + _).
+			sortBy( -_._2).
+			take(MAX_RECOS)
+
+		return matrixProduct
 	}
+			
+
+
+			
+
+			
+
 
 }
