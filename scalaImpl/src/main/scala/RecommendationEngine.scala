@@ -6,9 +6,18 @@ import scala.math.log
 
 object RecommendationEngine {
 	val THRESHOLD = 0.8
-	val MAX_RECOS = 256
+	val MAX_SIMILARITIES = 256
 	val MIN_COUNT = 10
-	val MIN_ITEM_COUNT_PER_USER = 20
+	val MIN_ITEM_COUNT_PER_USER = 1
+	val MAX_RECOS=5
+
+	var thresholdedSimilarities:org.apache.spark.rdd.RDD[(Int, (Int, Double, Int, Int, Int))]  = null
+
+	var userRatings:org.apache.spark.rdd.RDD[(Int, Int, Int)] = null
+
+	var coOccurenceMatrix:org.apache.spark.rdd.RDD[((Int, Int), Int)] = null
+
+	var itemPairSimilarities:org.apache.spark.rdd.RDD[(Int, (Int, Double, Int, Int, Int))] = null
 
 	def main(args: Array[String]){
 
@@ -64,12 +73,14 @@ object RecommendationEngine {
 		import spark.implicits._
 
 		//-----   Read in data into dataframe of columns = user, movie   -----------
-		val userItem = spark.read.option("sep","\t").
+		userRatings = spark.read.option("sep","\t").
 			option("inferSchema","true").
 			csv("projects/recommendationEngine/test.data").
-			drop("_c2","_c3").
+			drop("_c3").
 			rdd.
-			map( x => (x(0).asInstanceOf[Int], x(1).asInstanceOf[Int]))
+			map( x => (x(0).asInstanceOf[Int], x(1).asInstanceOf[Int], x(2).asInstanceOf[Int]))
+
+		val userItem = userRatings.map(x => (x._1, x._2))
 
 		val userItemCount = userItem.groupByKey().filter( {case (x,y) => y.toSeq.length > MIN_ITEM_COUNT_PER_USER})
 
@@ -90,15 +101,17 @@ object RecommendationEngine {
 			reduceByKey( (a,b) => (a._1,a._2,a._3+b._3)).
 			filter(x => x._2._3 >= MIN_COUNT ) //ignore item pairs that have very low count
 
+		coOccurenceMatrix = userItemPairs.map( {case ((a,b),(c,d,e)) => ((a,b), c)})
+
 		val num_total_users = itemsByUser.map(x => x._1).distinct().count()
 
-		val itemPairSimilarities = userItemPairs.map( {case ((it1,it2),(numUsers1,numUsers2,numCommonUsers)) =>
+		itemPairSimilarities = userItemPairs.map( {case ((it1,it2),(numUsers1,numUsers2,numCommonUsers)) =>
 			(it1, (it2, get_similarity_fn(num_total_users)(numUsers1,numUsers2,numCommonUsers), numUsers1, numUsers2, numCommonUsers))})
 
-		val thresholdedSimilarities = itemPairSimilarities.filter(x => x._2._2 > THRESHOLD)
+		thresholdedSimilarities = itemPairSimilarities.filter(x => x._2._2 > THRESHOLD)
 
 		val recommendations = thresholdedSimilarities.groupByKey().
-			map( { case (x,y) => (x, y.toSeq.sortWith(_._2 > _._2).take(MAX_RECOS))})
+			map( { case (x,y) => (x, y.toSeq.sortWith(_._2 > _._2).take(MAX_SIMILARITIES))})
 
 		val sortedRecommendations = recommendations.flatMapValues(x => x).
 			map(x => (x._1, x._2._1, x._2._2, x._2._3, x._2._4, x._2._5)).
@@ -107,11 +120,6 @@ object RecommendationEngine {
 		sortedRecommendations.
 			map({ case (it1, it2, sim, nu1, nu2, cu) => s"$it1\t$it2\t$sim\t$nu1\t$nu2\t$cu"}).
 			saveAsTextFile("projects/recommendationEngine/output_scala")
-
-
-		
-
-
 
 		
 		/*********************************************************************/
@@ -150,10 +158,45 @@ object RecommendationEngine {
 			*/
 	}
 
-	def getRecommendationsForUser(userId: String) {
-
+	def getRecosForKnownUser(userId: String) {
 		//---- Get preferences of user     ------------
 		//val userPrefs = dataDF.filter(user == userId).groupBy("user").agg(collect_set("user") as "users").orderBy(asc("movie"))
+		val userPrefs = userRatings.
+			filter({case (u,i,r) => u == userId.asInstanceOf[Int]}).
+			flatMap({case (u,i,r) => Array((i, r))})
+
+		val columnProducts = userPrefs.join(itemPairSimilarities).
+			map({ case (it1, (r1, (it2, s2,d1,d2,d3))) => ( it2,  r1*s2) })
+
+		val matrixProduct = columnProducts.
+			reduceByKey(_ + _).
+			sortBy( -_._2).
+			take(MAX_RECOS)
+
+		return matrixProduct.first()
+	}
+
+
+	def getRecosForNewUser(ratings : Array[(Int,Int)]) {
+		//---- Get preferences of user     ------------
+		val userPrefs = spark.sparkContext.sparallelize(ratings)
+
+		val columnProducts = userPrefs.join(itemPairSimilarities).
+			map({ case (it1, (r1, (it2, s2,d1,d2,d3))) => ( it2,  r1*s2) })
+
+		val matrixProduct = columnProducts.
+			reduceByKey(_ + _).
+			sortBy( -_._2).
+			take(MAX_RECOS)
+
+		return matrixProduct.first()
+	}
+			
+
+
+			
+
+			
 
 		//---- matrix multiplication  ----------------
 		//---  multiply each column i of similarity matrix with column i of userPrefs ----
