@@ -2,14 +2,15 @@ import org.apache.spark.{SparkContext, SparkConf}
 import org.apache.spark.sql.{SparkSession, Column}
 import org.apache.spark.sql.functions._
 import scala.math.log
+import collection.mutable.Map
 
 
 object RecommendationEngine {
-	val THRESHOLD = 0.9
-	val MAX_SIMILARITIES = 256
-	val MIN_COUNT = 10
-	val MIN_ITEM_COUNT_PER_USER = 1
-	val MAX_RECOS=5
+	var THRESHOLD = 0.9
+	var MAX_SIMILARITIES = 256
+	var MIN_COUNT = 10
+	var MIN_ITEM_COUNT_PER_USER = 1
+	var MAX_RECOS=5
 
 	var thresholdedSimilarities:org.apache.spark.rdd.RDD[(Int, (Int, Double, Int, Int, Int))]  = null
 
@@ -21,11 +22,23 @@ object RecommendationEngine {
 
 	var spark : SparkSession = null
 
-	def main(args: Array[String]){
+
+	def main(args: Array[String]) {
+	  parse_options(args)
 		init_spark()
-		//calculateSimilarities()
+		calculateSimilarities()
 		loadSimilarities()
 		println("Recos for user 1 : "+getRecosForKnownUser("1").deep.mkString("\n"))
+	}
+
+
+	def parse_options(args: Array[String])  {
+		args.sliding(2, 2).toList.collect {
+			case Array("--threshold", value: String) => THRESHOLD = value.toDouble
+			case Array("--max_similarities", value: String) => MAX_SIMILARITIES = value.toInt
+			case Array("--min_common_count", value: String) => MIN_COUNT = value.toInt
+			case Array("--max_recos", value: String) => MAX_RECOS = value.toInt
+		}
 	}
 
 
